@@ -1,0 +1,111 @@
+# ARM Test and Release Pipeline
+variables:
+  arm_template_file_path: 'arm/main.json'
+  arm_parameters_file_path: 'arm/parameter/parameter.json'
+
+  AzureArmName: 'ArmDeployment1' #Must be unique, keeps deployments separate
+
+  arm_mode: 'Incremental' # Incremental or Complete - https://docs.microsoft.com/en-us/azure/azure-resource-manager/templates/deployment-modes
+  
+  service_connection_name: 'AzureDevOpsServiceConnectionName' #Create this in Azure DevOps portal
+  deploy_resource_group_name: 'ResourceGroupName' #Existing Resource Group name in Azure
+  location: 'eastus' 
+  
+# Use by windows-latest version of cloud-hosted ADO builders
+pool:
+    vmImage: 'windows-latest'
+
+# Automatically trigger pipeline when master branch updated (PR merged) in path "config/*"
+trigger:
+  branches:
+    include:
+    - master
+  paths:
+    include:
+    - arm
+
+# Release instructions
+stages:
+- stage: ARM_Check
+  # Only run stage when triggered from pull request
+  condition: eq(variables['Build.Reason'], 'PullRequest')
+  jobs:
+  - deployment: ARM_Check
+    displayName: Check ARM Config
+    environment: ARM_Check
+    continueOnError: false
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - checkout: self
+
+            - task: PowerShell@2
+              displayName: 'Install pre-reqs'
+              inputs:
+                targetType: 'inline'
+                workingDirectory: $(System.DefaultWorkingDirectory)
+                failOnStderr: false
+                script: |
+                  # Get version commands
+                  echo "Getting powershell version"
+                  echo $PSVersionTable.PSVersion 
+                  
+                  echo "Getting az powershell module version"
+                  az --version
+                  
+                  # Update AZ
+                  az upgrade --yes
+                  
+            - task: AzurePowerShell@5
+              displayName: Prepare Test ARM Template Spec
+              inputs:
+                azureSubscription: $(service_connection_name)
+                ScriptType: InlineScript
+                azurePowerShellVersion: LatestVersion
+                Inline: |
+                  New-AzTemplateSpec -Name $(AzureArmName)TemplateSpec -Version "0.9" -ResourceGroupName $(deploy_resource_group_name) -Location $(location) -TemplateFile "$(arm_template_file_path)" -Force
+                  
+            - task: AzurePowerShell@5
+              displayName: Generate ARM WhatIf
+              inputs:
+                azureSubscription: $(service_connection_name)
+                ScriptType: InlineScript
+                azurePowerShellVersion: LatestVersion
+                Inline: |
+                  $template_spec_id = (Get-AzTemplateSpec -ResourceGroupName $(deploy_resource_group_name) -Name $(AzureArmName)TemplateSpec -Version "0.9").Versions.Id
+                  New-AzResourceGroupDeployment -WhatIf -TemplateSpecId $template_spec_id -ResourceGroupName $(deploy_resource_group_name) -TemplateParameterFile "$(arm_parameters_file_path)"
+
+
+- stage: ARM_Deploy
+  # Don't run stage when triggered from pull request
+  condition: ne(variables['Build.Reason'], 'PullRequest')
+  jobs:
+  - deployment: ARM_Deploy
+    displayName: Deploy ARM
+    environment: ARM_Deploy
+    continueOnError: false
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - checkout: self
+
+            - task: AzurePowerShell@5
+              displayName: Prepare Deploy ARM Template Spec
+              inputs:
+                azureSubscription: $(service_connection_name)
+                ScriptType: InlineScript
+                azurePowerShellVersion: LatestVersion
+                Inline: |
+                  New-AzTemplateSpec -Name $(AzureArmName)TemplateSpec -Version "1.0" -ResourceGroupName $(deploy_resource_group_name) -Location $(location) -TemplateFile "$(arm_template_file_path)" -Force
+
+            - task: AzurePowerShell@5
+              displayName: Deploy ARM Template
+              inputs:
+                azureSubscription: $(service_connection_name)
+                ScriptType: InlineScript
+                azurePowerShellVersion: LatestVersion
+                Inline: |
+                  $template_spec_id = (Get-AzTemplateSpec -ResourceGroupName $(deploy_resource_group_name) -Name $(AzureArmName)TemplateSpec -Version "1.0").Versions.Id
+                  New-AzResourceGroupDeployment -TemplateSpecId $template_spec_id -ResourceGroupName $(deploy_resource_group_name) -TemplateParameterFile "$(arm_parameters_file_path)" -Mode $(arm_mode)

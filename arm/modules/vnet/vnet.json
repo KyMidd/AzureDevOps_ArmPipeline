@@ -1,0 +1,36 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {},
+    "variables": {},
+    "resources": [{
+        "type": "Microsoft.Network/virtualNetworks",
+        "apiVersion": "2020-05-01",
+        "name": "vNetName",
+        "location": "eastus",
+        "properties": {
+            "addressSpace": {
+                "addressPrefixes": [
+                    "10.2.0.0/16"
+                ]
+            },
+            "subnets": [{
+                "name": "default",
+                "properties": {
+                    "addressPrefix": "10.2.0.0/24",
+                    "serviceEndpoints": [{
+                        "service": "Microsoft.KeyVault",
+                        "locations": [
+                            "*"
+                        ]
+                    }],
+                    "delegations": [],
+                    "privateEndpointNetworkPolicies": "Enabled",
+                    "privateLinkServiceNetworkPolicies": "Enabled"
+                }
+            }],
+            "virtualNetworkPeerings": [],
+            "enableDdosProtection": false
+        }
+    }]
+}
